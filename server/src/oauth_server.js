@@ -1,12 +1,12 @@
 const express = require('express');
+const dotenv = require('dotenv');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 
@@ -17,24 +17,23 @@ app.get('/token', async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'client_credentials',
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET
+        client_id: process.env.CLIENT_ID,
+        client_secret: process.env.CLIENT_SECRET
       })
     });
 
+    const data = await response.json();
     if (!response.ok) {
-      const errorData = await response.text();
-      return res.status(response.status).send(errorData);
+      return res.status(response.status).json({ error: data.error_description || 'Token fetch failed' });
     }
 
-    const data = await response.json();
     res.json({ token: data.access_token });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Something went wrong while fetching token' });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`OAuth server running on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`OAuth server running on port ${port}`);
 });
