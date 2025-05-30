@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Live Flights Near Chennai</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    #map { height: 100%; }
+    .leaflet-popup-content-wrapper {
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      font-size: 13px;
+    }
+    .rotated-icon {
+      transform-origin: center;
+    }
+    #message {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffcc00;
+      color: black;
+      padding: 8px 16px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      font-size: 14px;
+      display: none;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div id="message">Too many requests. Trying again in 30 seconds...</div>
+  <div id="map"></div>
+  <script>
+    async function getAccessToken() {
+      const res = await fetch('https://opensky-oauth-server.onrender.com/token');
+      const data = await res.json();
+      return data.token;
+    }
+
+
+    const map = L.map('map', {
+      minZoom: 6,
+      maxZoom: 12,
+      maxBounds: [[8.0, 73.0], [20.0, 85.0]],
+      maxBoundsViscosity: 1.0
+    }).setView([13.0827, 80.2707], 7);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap, CartoDB',
+      subdomains: 'abcd',
+      maxZoom: 19
+    }).addTo(map);
+
+    const chennaiAirportIcon = L.icon({
+      iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+      popupAnchor: [0, -16]
+    });
+
+    L.marker([12.9941, 80.1709], { icon: chennaiAirportIcon })
+      .addTo(map)
+      .bindTooltip("Chennai Airport", { permanent: false, direction: "right" });
+
+    const airlineNames = {
+      'AI': 'Air India', 'IX': 'Air India Express', '6E': 'IndiGo', 'SG': 'SpiceJet',
+      'UK': 'Vistara', 'I5': 'AirAsia India', 'IG': 'IndiGo', 'SEJ': 'SpiceJet', 'SDG': 'Star Air',
+      'MAS': 'Malaysia Airlines', 'MH': 'Malaysia Airlines', 'SQ': 'Singapore Airlines', 'EK': 'Emirates',
+      'SI': 'Singapore Airlines', 'QR': 'Qatar Airways', 'BA': 'British Airways',
+      'TG': 'Thai Airways', 'SD': 'Star Air', 'SE': 'SpiceJet', 'CS': 'SF Air Chinese Cargo',
+      'AX': 'Air India Express', 'QT': 'Qatar Airlines', 'AL': 'Srilankan Airlines',
+      'AB': 'Air Arabia', 'CL': 'Cargolux Airlines (Luxembourg Cargo)',
+      'OM': 'Oman Airlines', 'UA': 'Emirates', 'SV': 'Saudia', 'ET': 'Ethihad','GF':'Gulf Air'
+    };
+
+    function getAirlineName(callsign) {
+      if (!callsign) return "Unknown Airline";
+      const code = callsign.slice(0, 2).toUpperCase();
+      return airlineNames[code] || "Unknown Airline";
+    }
+
+    function isIndianFlight(callsign) {
+      return /^(VT|AI|IX|6E|SG|UK|I5|IG|SEJ|SDG|AX)/i.test(callsign);
+    }
+
+    function altitudeColor(alt, isIndian) {
+      const bins = [0, 2000, 4000, 6000, 8000, 10000, 12000];
+      const redHues = [
+        '#b30000', // < 2k – rich red
+        '#e60000', // 2k–4k – bright red
+        '#ff4d4d', // 4k–6k – vivid red
+        '#ff704d', // 6k–8k – coral
+        '#ff944d', // 8k–10k – light orange
+        '#ffb347', // 10k–12k – pale orange
+        '#ffe5b4'  // > 12k – peachy
+        ];
+
+        const blueHues = [
+        '#0066cc', // < 2k – vibrant medium blue
+        '#0099ff', // 2k–4k – strong sky blue
+        '#1ab2ff', // 4k–6k – light azure
+        '#33ccff', // 6k–8k – soft cyan
+        '#66d9ff', // 8k–10k – sky tint
+        '#b3ecff', // 10k–12k – icy blue
+        '#e0ffff'  // > 12k – white-cyan
+        ];
+
+      let idx = bins.findIndex(b => alt < b);
+      if (idx === -1) idx = bins.length - 1;
+
+      return isIndian ? redHues[idx] : blueHues[idx];
+    }
+
+    function rotatedIcon(heading, colorHex) {
+      const colorCode = colorHex.replace("#", "");
+      return L.divIcon({
+        html: `<img src='https://img.icons8.com/?size=100&id=86149&format=png&color=${colorCode}' class='rotated-icon' style='transform: rotate(${heading || 0}deg); width: 32px; height: 32px;'>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        className: ''
+      });
+    }
+
+    let markers = [];
+    const trails = {};
+    let selectedTrail = null;
+
+    async function updateFlights() {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch('https://opensky-network.org/api/states/all?lamin=12&lomin=79&lamax=14&lomax=81', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.status === 429) {
+          document.getElementById('message').style.display = 'block';
+          setTimeout(() => {
+            document.getElementById('message').style.display = 'none';
+            updateFlights();
+          }, 30000);
+          return;
+        }
+
+        const data = await res.json();
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        if (data.states) {
+          for (const f of data.states) {
+            const lat = f[6], lon = f[5], alt = f[7], heading = f[10], icao24 = f[0];
+            const callsign = (f[1] || '').trim();
+            if (lat && lon && alt && alt > 0) {
+              const isIndian = isIndianFlight(callsign);
+              const color = altitudeColor(alt, isIndian);
+              if (!trails[icao24]) trails[icao24] = [];
+              trails[icao24].push([lat, lon]);
+              if (trails[icao24].length > 10) trails[icao24].shift();
+
+              const marker = L.marker([lat, lon], {
+                icon: rotatedIcon(heading, color)
+              }).bindPopup(
+                `<b>${getAirlineName(callsign)}</b><br><small>${callsign}</small><br>Altitude: ${alt.toFixed(0)} m`
+              );
+
+              marker.on('click', () => {
+                if (selectedTrail) map.removeLayer(selectedTrail);
+                selectedTrail = L.polyline(trails[icao24], {
+                  color,
+                  weight: 2,
+                  opacity: 0.6
+                }).addTo(map);
+              });
+
+              marker.addTo(map);
+              markers.push(marker);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching flight data:", e);
+      }
+    }
+
+    map.on('click', () => {
+      if (selectedTrail) {
+        map.removeLayer(selectedTrail);
+        selectedTrail = null;
+      }
+    });
+
+    // Legend
+    const legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create('div', 'info legend');
+      const redHues = ['#660000', '#991111', '#cc2222', '#e65555', '#f57a7a', '#ffaaaa', '#ffcccc'];
+      const blueHues = ['#001f4d', '#003366', '#005580', '#0077a3', '#3399cc', '#66b2e6', '#cce6ff'];
+      const altLabels = ['<2000', '2k–4k', '4k–6k', '6k–8k', '8k–10k', '10k–12k', '>12k'];
+
+      div.innerHTML = `<div style="background:#000; color:#fff; padding:6px; font-size:12px; border-radius:4px;">
+        <b>Altitude (Indian vs Non-Indian)</b><br>
+        ${altLabels.map((label, i) => `
+          <div>
+            <i style="background:${redHues[i]};width:12px;height:12px;display:inline-block;margin-right:4px;"></i>
+            <i style="background:${blueHues[i]};width:12px;height:12px;display:inline-block;margin-right:4px;"></i>
+            ${label} m
+          </div>
+        `).join('')}
+      </div>`;
+      return div;
+    };
+    legend.addTo(map);
+
+    setInterval(updateFlights, 22000);
+    updateFlights();
+  </script>
+</body>
+</html>
