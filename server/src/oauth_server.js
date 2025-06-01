@@ -2,7 +2,8 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
+const axios = require('axios');
+const cheerio = require('cheerio');
 dotenv.config();
 
 const app = express();
@@ -31,6 +32,34 @@ app.get('/token', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/iss-sighting', async (req, res) => {
+  try {
+    const url = 'https://spotthestation.nasa.gov/sightings/view.cfm?country=India&region=None&city=Chennai';
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
+
+    const sightings = [];
+    $('table tbody tr').each((i, el) => {
+      const tds = $(el).find('td');
+      const date = $(tds[0]).text().trim();
+      const time = $(tds[1]).text().trim();
+      const maxHeightText = $(tds[4]).text().trim(); // "Max Height"
+      const maxDeg = parseInt(maxHeightText.split('°')[0]);
+
+      if (maxDeg > 40) {
+        sightings.push({ date, time, maxHeight: maxDeg });
+      }
+    });
+
+    if (sightings.length === 0) return res.json({ next: null });
+    return res.json({ next: sightings[0] });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch ISS sightings" });
   }
 });
 
