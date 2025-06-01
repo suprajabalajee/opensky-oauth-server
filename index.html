@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
   <style>
     html, body { margin: 0; height: 100%; background: #000; }
+    
     #map { height: 100%; }
     .leaflet-popup-content-wrapper {
       background: rgba(0, 0, 0, 0.85);
@@ -31,12 +32,113 @@
       display: none;
       z-index: 1000;
     }
+    .leaflet-tooltip.iss-label {
+    background: rgba(255, 255, 255, 0.9);
+    color: black;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    transform: matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+  }
+  #iss-status {
+  position: absolute;
+  top: 40px;
+  left: 10px;
+  color: white;
+  background: rgba(50, 50, 50, 0.8);
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-family: sans-serif;
+  font-size: 14px;
+  z-index: 1001;
+  pointer-events: none;
+}
+
   </style>
 </head>
 <body>
+  <button id="goto-iss" style="
+  position: absolute;
+  top: 80px;
+  left: 10px;
+  z-index: 1002;
+  background: #1e90ff;
+  color: white;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: sans-serif;
+">
+  Go to ISS 🛰
+</button>
+<button id="goto-chennai" style="
+  position: absolute;
+  top: 120px;
+  left: 10px;
+  z-index: 1002;
+  background: #32cd32;
+  color: white;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: sans-serif;
+">
+  Back to Chennai 🛬
+</button>
+
   <div id="message">Too many requests. Trying again in 30 seconds...</div>
+  <div id="iss-status">🛰 Loading ISS position...</div>
+  
+<div id="bounds-toggle" style="
+  position: absolute;
+  top: 80px;
+  left: 10px;
+  z-index: 1001;
+  background: rgba(50,50,50,0.8);
+  color: white;
+  font-family: sans-serif;
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+">
+  🛰 Free Roam: OFF
+</div>
+<div id = "chennai_next_pass" style="
+    color: wheat;
+">Next Chennai Pass</div>
   <div id="map"></div>
+
   <script>
+    let freeRoamEnabled = false;
+
+document.getElementById('bounds-toggle').addEventListener('click', () => {
+  freeRoamEnabled = !freeRoamEnabled;
+  const toggle = document.getElementById('bounds-toggle');
+
+  if (freeRoamEnabled) {
+    map.setMaxBounds(null);
+    toggle.innerText = '🛰 Free Roam: ON';
+  } else {
+    map.setMaxBounds([[8.0, 73.0], [20.0, 85.0]]);
+    toggle.innerText = '🛰 Free Roam: OFF';
+    // Snap back to Chennai view if out of bounds
+    const center = map.getCenter();
+    if (
+      center.lat < 8 || center.lat > 20 ||
+      center.lng < 73 || center.lng > 85
+    ) {
+      map.setView([13.0827, 80.2707], 7);
+    }
+  }
+});
+
     async function getAccessToken() {
       const res = await fetch('https://opensky-oauth-server.onrender.com/token');
       const data = await res.json();
@@ -71,13 +173,27 @@
     const airlineNames = {
       'AI': 'Air India', 'IX': 'Air India Express', '6E': 'IndiGo', 'SG': 'SpiceJet',
       'UK': 'Vistara', 'I5': 'AirAsia India', 'IG': 'IndiGo', 'SEJ': 'SpiceJet', 'SDG': 'Star Air',
-      'MAS': 'Malaysia Airlines', 'MH': 'Malaysia Airlines', 'SQ': 'Singapore Airlines', 'EK': 'Emirates',
+      'MA': 'Malaysia Airlines', 'MH': 'Malaysia Airlines', 'SQ': 'Singapore Airlines', 'EK': 'Emirates',
       'SI': 'Singapore Airlines', 'QR': 'Qatar Airways', 'BA': 'British Airways',
       'TG': 'Thai Airways', 'SD': 'Star Air', 'SE': 'SpiceJet', 'CS': 'SF Air Chinese Cargo',
       'AX': 'Air India Express', 'QT': 'Qatar Airlines', 'AL': 'Srilankan Airlines',
       'AB': 'Air Arabia', 'CL': 'Cargolux Airlines (Luxembourg Cargo)',
-      'OM': 'Oman Airlines', 'UA': 'Emirates', 'SV': 'Saudia', 'ET': 'Ethihad','GF':'Gulf Air'
+      'OM': 'Oman Airlines', 'UA': 'Emirates', 'SV': 'Saudia', 'ET': 'Ethihad','GF':'Gulf Air',
+      'VJ':'Vietjet','BD':'Bluedart','FD':'Fly Dubai','AF':'Air France','CP':'Cathay Pacific',
+      'VT':'Private owner','LH':'Longhao airlines'
     };
+
+    async function getCountryFromCoords(lat, lon) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+        const data = await res.json();
+        if(data.address) return data.address.country; else return "Over Ocean";
+      } catch (err) {
+        console.error("Reverse geocoding failed:", err);
+        return "Over Ocean";
+      }
+    }
+
 
     function getAirlineName(callsign) {
       if (!callsign) return "Unknown Airline";
@@ -187,6 +303,8 @@
       }
     }
 
+  
+
     map.on('click', () => {
       if (selectedTrail) {
         map.removeLayer(selectedTrail);
@@ -218,6 +336,109 @@
 
     setInterval(updateFlights, 22000);
     updateFlights();
+
+    const issIcon = L.icon({
+  iconUrl: "https://img.icons8.com/ios-filled/50/ffffff/satellite.png",
+  iconSize: [40, 40],
+  iconAnchor: [20, 20],
+  
+});
+
+let issMarker = null;
+let followISS = false;
+
+let latestISSLat = null;
+let latestISSLon = null;
+async function updateISS() {
+  try {
+    const res = await fetch("http://api.open-notify.org/iss-now.json");
+    const data = await res.json();
+    const lat = parseFloat(data.iss_position.latitude);
+    const lon = parseFloat(data.iss_position.longitude);
+    latestISSLat = lat;
+    latestISSLon = lon;
+    const inSouthIndia = lat >= 8 && lat <= 20 && lon >= 73 && lon <= 85;
+    let country = await getCountryFromCoords(lat, lon);
+    // Update ISS status display
+    const statusText = inSouthIndia
+      ? `🛰 ISS is overhead South India!`
+      : `🛰 ISS approx. at Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°\nAbove: ${country}`;
+
+   
+    document.getElementById('iss-status').innerText = statusText;
+
+    if (!issMarker) {
+  issMarker = L.marker([lat, lon], { icon: issIcon }).addTo(map);
+} else {
+  issMarker.setLatLng([lat, lon]);
+  if (followISS) {
+    map.panTo([lat, lon], { animate: true });
+  }
+}
+
+  } catch (err) {
+    console.error("ISS fetch failed:", err);
+    document.getElementById('iss-status').innerText = "🛰 ISS position unavailable.";
+  }
+}
+
+
+// Refresh ISS every 10s
+setInterval(updateISS, 10000);
+updateISS();
+async function getNextChennaiPass() {
+  try {
+    const res = await fetch("https://opensky-oauth-server.onrender.com/iss-sighting");  // change to your deployed server
+    const data = await res.json();
+
+    if (data.next) {
+      const { date, time, maxHeight } = data.next;
+      document.getElementById('chennai_next_pass').innerText =
+        `🛰 Next ISS over Chennai (height > 40°): ${date} at ${time} (${maxHeight}°)`;
+    } else {
+      document.getElementById('chennai_next_pass').innerText =
+        `🛰 No high-altitude passes over Chennai in the next few days.`;
+    }
+  } catch (err) {
+    console.error("Failed to fetch next ISS pass:", err);
+    document.getElementById('chennai_next_pass').innerText =
+      "🛰 ISS pass data unavailable.";
+  }
+}
+
+getNextChennaiPass();
+document.getElementById('goto-iss').addEventListener('click', () => {
+  if (latestISSLat !== null && latestISSLon !== null) {
+    followISS = true;
+    map.setMaxBounds(null); // Allow free roam temporarily
+    map.flyTo([latestISSLat, latestISSLon], 4, {
+      animate: true,
+      duration: 2
+    });
+  } else {
+    alert("ISS location is still loading...");
+  }
+});
+document.getElementById('goto-chennai').addEventListener('click', () => {
+  followISS = false;
+  map.setView([13.0827, 80.2707], 7);
+  if (!freeRoamEnabled) {
+    map.setMaxBounds([[8.0, 73.0], [20.0, 85.0]]);
+  }
+});
+
+
+
   </script>
 </body>
+
+<!--
+  1. VTMTW tracking
+  2. ISS integration
+  3. Login based client id, secret retrieval
+  4. Stargazing?
+  5. Spot rare flights
+-->
+
 </html>
+
