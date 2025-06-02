@@ -37,8 +37,11 @@ app.get('/token', async (req, res) => {
 
 app.get('/iss-sighting', async (req, res) => {
   try {
-    const url = 'https://spotthestation.nasa.gov/sightings/view.cfm?country=India&region=None&city=Chennai';
-    const response = await axios.get(url);
+    const response = await axios.get('https://spotthestation.nasa.gov/sightings/view.cfm?country=India&region=None&city=Chennai', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36'
+      }
+    });
     const $ = cheerio.load(response.data);
 
     const sightings = [];
